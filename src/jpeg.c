@@ -147,7 +147,7 @@ static void jpeg_get_mcu(image_t *src, int x_offset, int y_offset, int dx, int d
             }
             break;
         }
-        case PIXFORMAT_RGB565: {
+        case PIXFORMAT_RGB565: {//printf("input rgb565\n");
             if ((dx != MCU_W) || (dy != MCU_H)) { // partial MCU, fill with 0's to start
                 memset(Y0, 0, JPEG_444_GS_MCU_SIZE);
                 memset(CB, 0, JPEG_444_GS_MCU_SIZE);
@@ -156,9 +156,11 @@ static void jpeg_get_mcu(image_t *src, int x_offset, int y_offset, int dx, int d
 
             for (int y = y_offset, yy = y + dy, index = 0; y < yy; y++) {
                 uint32_t *rp = (uint32_t *) (IMAGE_COMPUTE_RGB565_PIXEL_ROW_PTR(src, y) + x_offset);
-
+                printf("start\n");
                 for (int x = 0, xx = dx - 1; x < xx; x += 2, index += 2) {
                     int pixels = *rp++;
+                    // if(pixels!=0xffffffff)
+                    printf("pixels:%x\n", pixels);
                     int r_pixels = ((pixels >> 8) & 0xf800f8) | ((pixels >> 13) & 0x70007);
                     int g_pixels = ((pixels >> 3) & 0xfc00fc) | ((pixels >> 9) & 0x30003);
                     int b_pixels = ((pixels << 3) & 0xf800f8) | ((pixels >> 2) & 0x70007);
@@ -186,7 +188,7 @@ static void jpeg_get_mcu(image_t *src, int x_offset, int y_offset, int dx, int d
                     #endif
 
                     CR[index] = v, CR[index + 1] = v >> 16;
-                }
+                }printf("voer\n");
 
                 if (dx & 1) {
                     int pixel = *((uint16_t *) rp);
@@ -223,7 +225,7 @@ static void jpeg_get_mcu(image_t *src, int x_offset, int y_offset, int dx, int d
             }
             break;
         }
-        case PIXFORMAT_RGB888: {
+        case PIXFORMAT_RGB888: {//printf("input rgb888\n");
             if ((dx != MCU_W) || (dy != MCU_H)) { // partial MCU, fill with 0's to start
                 memset(Y0, 0, JPEG_444_GS_MCU_SIZE);
                 memset(CB, 0, JPEG_444_GS_MCU_SIZE);
@@ -231,16 +233,17 @@ static void jpeg_get_mcu(image_t *src, int x_offset, int y_offset, int dx, int d
             }
 
             for (int y = y_offset, yy = y + dy, index = 0; y < yy; y++) {
-                uint32_t *rp = (uint32_t *) (IMAGE_COMPUTE_RGB888_PIXEL_ROW_PTR(src, y) + x_offset);
-
+                pixel24_t *rp = (pixel24_t *) (IMAGE_COMPUTE_RGB888_PIXEL_ROW_PTR(src, y) + x_offset);
                 for (int x = 0, xx = dx - 1; x < xx; x += 2, index += 2) {
-                    int pixels = *rp++;
+                    uint16_t rgb565_1 = COLOR_R8_G8_B8_TO_RGB565((rp)->red, (rp)->green, (rp)->blue);
+                    rp++;
+                    uint16_t rgb565_2 = COLOR_R8_G8_B8_TO_RGB565((rp)->red, (rp)->green, (rp)->blue);
+                    rp++;
+                    int pixels = rgb565_2 << 16 | rgb565_1;
                     int r_pixels = ((pixels >> 8) & 0xf800f8) | ((pixels >> 13) & 0x70007);
                     int g_pixels = ((pixels >> 3) & 0xfc00fc) | ((pixels >> 9) & 0x30003);
                     int b_pixels = ((pixels << 3) & 0xf800f8) | ((pixels >> 2) & 0x70007);
-
                     int y = ((r_pixels * 38) + (g_pixels * 75) + (b_pixels * 15)) >> 7;
-
                     #if (OMV_HARDWARE_JPEG == 0)
                     y ^= 0x800080;
                     #endif
@@ -265,10 +268,11 @@ static void jpeg_get_mcu(image_t *src, int x_offset, int y_offset, int dx, int d
                 }
 
                 if (dx & 1) {
-                    int pixel = pixel24232(*((pixel24_t *) rp));
-                    int r = COLOR_RGB888_TO_R8(pixel);
-                    int g = COLOR_RGB888_TO_G8(pixel);
-                    int b = COLOR_RGB888_TO_B8(pixel);
+                    uint16_t rgb565_1 = COLOR_R8_G8_B8_TO_RGB565((rp)->red, (rp)->green, (rp)->blue);
+                    int pixel = rgb565_1;
+                    int r = COLOR_RGB565_TO_R8(pixel);
+                    int g = COLOR_RGB565_TO_G8(pixel);
+                    int b = COLOR_RGB565_TO_B8(pixel);
 
                     int y0 = COLOR_RGB888_TO_Y_(r, g, b);
 
@@ -1037,327 +1041,6 @@ static void jpeg_get_mcu(image_t *src, int x_offset, int y_offset, int dx, int d
 }
 
 #if (OMV_HARDWARE_JPEG == 1)
-#include STM32_HAL_H
-#include "irq.h"
-
-#define FB_ALLOC_PADDING            ((__SCB_DCACHE_LINE_SIZE) * 4)
-#define OUTPUT_CHUNK_SIZE           (512) // The minimum output buffer size is 2x this - so 1KB.
-#define JPEG_INPUT_FIFO_BYTES       (32)
-#define JPEG_OUTPUT_FIFO_BYTES      (32)
-
-static JPEG_HandleTypeDef JPEG_Handle = {};
-static JPEG_ConfTypeDef JPEG_Config = {};
-static MDMA_HandleTypeDef JPEG_MDMA_Handle_In = {};
-static MDMA_HandleTypeDef JPEG_MDMA_Handle_Out = {};
-
-static int JPEG_out_data_length_max = 0;
-static volatile int JPEG_out_data_length = 0;
-static volatile bool JPEG_input_paused = false;
-static volatile bool JPEG_output_paused = false;
-
-// JIFF-APP0 header designed to be injected at the start of the JPEG byte stream.
-// Contains a variable sized COM header at the end for cache alignment.
-static const uint8_t JPEG_APP0[] = {
-    0xFF, 0xE0, // JIFF-APP0
-    0x00, 0x10, // 16
-    0x4A, 0x46, 0x49, 0x46, 0x00, // JIFF
-    0x01, 0x01, // V1.01
-    0x01, // DPI
-    0x00, 0x00, // Xdensity 0
-    0x00, 0x00, // Ydensity 0
-    0x00, // Xthumbnail 0
-    0x00, // Ythumbnail 0
-    0xFF, 0xFE // COM
-};
-
-void JPEG_IRQHandler()
-{
-    IRQ_ENTER(JPEG_IRQn);
-    HAL_JPEG_IRQHandler(&JPEG_Handle);
-    IRQ_EXIT(JPEG_IRQn);
-}
-
-void jpeg_mdma_irq_handler()
-{
-    HAL_MDMA_IRQHandler(&JPEG_MDMA_Handle_In);
-    HAL_MDMA_IRQHandler(&JPEG_MDMA_Handle_Out);
-}
-
-static void jpeg_get_data_callback(JPEG_HandleTypeDef *hjpeg, uint32_t NbDecodedData)
-{
-    HAL_JPEG_Pause(hjpeg, JPEG_PAUSE_RESUME_INPUT);
-    JPEG_input_paused = true;
-}
-
-static void jpeg_data_ready_callback(JPEG_HandleTypeDef *hjpeg, uint8_t *pDataOut, uint32_t OutDataLength)
-{
-    // We have received this much data.
-    JPEG_out_data_length += OutDataLength;
-
-    if ((JPEG_out_data_length + OUTPUT_CHUNK_SIZE) > JPEG_out_data_length_max) {
-        // We will overflow if we receive anymore data.
-        HAL_JPEG_Pause(hjpeg, JPEG_PAUSE_RESUME_OUTPUT);
-        JPEG_output_paused = true;
-    } else {
-        uint8_t *new_pDataOut = pDataOut + OutDataLength;
-
-        // DMA will write data to the output buffer in __SCB_DCACHE_LINE_SIZE aligned chunks. At the
-        // end of JPEG compression the processor will manually transfer the remaining parts of the
-        // image in randomly aligned chunks. We only want to invalidate the cache of the output
-        // buffer for the initial DMA chunks. So, this code below will do that and then only
-        // invalidate aligned regions when the processor is moving the final parts of the image.
-        if (!(((uint32_t) new_pDataOut) % __SCB_DCACHE_LINE_SIZE)) {
-            SCB_InvalidateDCache_by_Addr((uint32_t *) new_pDataOut, OUTPUT_CHUNK_SIZE);
-        }
-
-        // We are ok to receive more data.
-        HAL_JPEG_ConfigOutputBuffer(hjpeg, new_pDataOut, OUTPUT_CHUNK_SIZE);
-    }
-}
-
-bool jpeg_compress(image_t *src, image_t *dst, int quality, bool realloc)
-{
-#if (TIME_JPEG==1)
-    mp_uint_t start = mp_hal_ticks_ms();
-#endif
-
-    int mcu_size = 0;
-    JPEG_ConfTypeDef JPEG_Info;
-    JPEG_Info.ImageWidth    = src->w;
-    JPEG_Info.ImageHeight   = src->h;
-    JPEG_Info.ImageQuality  = quality;
-
-    switch (src->pixfmt) {
-        case PIXFORMAT_BINARY:
-        case PIXFORMAT_GRAYSCALE:
-            mcu_size                    = JPEG_444_GS_MCU_SIZE;
-            JPEG_Info.ColorSpace        = JPEG_GRAYSCALE_COLORSPACE;
-            JPEG_Info.ChromaSubsampling = JPEG_444_SUBSAMPLING;
-            break;
-        case PIXFORMAT_RGB565:
-        case PIXFORMAT_BAYER_ANY:
-        case PIXFORMAT_YUV_ANY:
-            mcu_size                    = JPEG_444_YCBCR_MCU_SIZE;
-            JPEG_Info.ColorSpace        = JPEG_YCBCR_COLORSPACE;
-            JPEG_Info.ChromaSubsampling = JPEG_444_SUBSAMPLING;
-            break;
-        default:
-            break;
-    }
-
-    if (memcmp(&JPEG_Config, &JPEG_Info, sizeof(JPEG_ConfTypeDef))) {
-        HAL_JPEG_ConfigEncoding(&JPEG_Handle, &JPEG_Info);
-        memcpy(&JPEG_Config, &JPEG_Info, sizeof(JPEG_ConfTypeDef));
-    }
-
-    int src_w_mcus = (src->w + MCU_W - 1) / MCU_W;
-    int src_w_mcus_bytes = src_w_mcus * mcu_size;
-    int src_w_mcus_bytes_2 = src_w_mcus_bytes * 2;
-
-    // If dst->data == NULL then we need to fb_alloc() space for the payload which will be fb_free()'d
-    // by the caller. We have to alloc this memory for all cases if we return from the method.
-    if (!dst->data) {
-        uint32_t avail = fb_avail();
-        uint32_t space = src_w_mcus_bytes_2 + FB_ALLOC_PADDING;
-
-        if (avail < space) {
-            fb_alloc_fail();
-        }
-
-        dst->size = IMLIB_IMAGE_MAX_SIZE(avail - space);
-        dst->data = fb_alloc(dst->size, FB_ALLOC_PREFER_SIZE | FB_ALLOC_CACHE_ALIGN);
-    }
-
-    if (src->is_compressed) {
-        return true;
-    }
-
-    // Compute size of the APP0 header with cache alignment padding.
-    int app0_size = sizeof(JPEG_APP0);
-    int app0_unalign_size = app0_size % __SCB_DCACHE_LINE_SIZE;
-    int app0_padding_size = app0_unalign_size ? (__SCB_DCACHE_LINE_SIZE - app0_unalign_size) : 0;
-    int app0_total_size = app0_size + app0_padding_size;
-
-    if (dst->size < app0_total_size) {
-        return true; // overflow
-    }
-
-    // Adjust JPEG size and address by app0 header size.
-    dst->size -= app0_total_size;
-    uint8_t *dma_buffer = dst->data + app0_total_size;
-
-    // Destination is too small.
-    if (dst->size < (OUTPUT_CHUNK_SIZE * 2)) {
-        return true; // overflow
-    }
-
-    JPEG_out_data_length_max = dst->size;
-    JPEG_out_data_length = 0;
-    JPEG_input_paused = false;
-    JPEG_output_paused = false;
-
-    uint8_t *mcu_row_buffer = fb_alloc(src_w_mcus_bytes_2, FB_ALLOC_PREFER_SPEED | FB_ALLOC_CACHE_ALIGN);
-
-    for (int y_offset = 0; y_offset < src->h; y_offset += MCU_H) {
-        uint8_t *mcu_row_buffer_ptr = mcu_row_buffer + (src_w_mcus_bytes * ((y_offset / MCU_H) % 2));
-
-        int dy = src->h - y_offset;
-        if (dy > MCU_H) {
-            dy = MCU_H;
-        }
-
-        for (int x_offset = 0; x_offset < src->w; x_offset += MCU_W) {
-            int8_t *Y0 = (int8_t *) (mcu_row_buffer_ptr + (mcu_size * (x_offset / MCU_W)));
-            int8_t *CB = Y0 + JPEG_444_GS_MCU_SIZE;
-            int8_t *CR = CB + JPEG_444_GS_MCU_SIZE;
-
-            int dx = src->w - x_offset;
-            if (dx > MCU_W) {
-                dx = MCU_W;
-            }
-
-            // Copy 8x8 MCUs.
-            jpeg_get_mcu(src, x_offset, y_offset, dx, dy, Y0, CB, CR);
-        }
-
-        // Flush the MCU row for DMA...
-        SCB_CleanDCache_by_Addr((uint32_t *) mcu_row_buffer_ptr, src_w_mcus_bytes);
-
-        if (!y_offset) {
-            // Invalidate the output buffer.
-            SCB_InvalidateDCache_by_Addr(dma_buffer, OUTPUT_CHUNK_SIZE);
-            // Start the DMA process off on the first row of MCUs.
-            HAL_JPEG_Encode_DMA(&JPEG_Handle, mcu_row_buffer_ptr, src_w_mcus_bytes, dma_buffer, OUTPUT_CHUNK_SIZE);
-        } else {
-
-            // Wait for the last row MCUs to be processed before starting the next row.
-            while (!JPEG_input_paused) {
-                __WFI();
-
-                if (JPEG_output_paused) {
-                    memset(&JPEG_Config, 0, sizeof(JPEG_ConfTypeDef));
-                    HAL_JPEG_Abort(&JPEG_Handle);
-                    fb_free(); // mcu_row_buffer (after DMA is aborted)
-                    return true; // overflow
-                }
-            }
-
-            // Reset the lock.
-            JPEG_input_paused = false;
-
-            // Restart the DMA process on the next row of MCUs (that were already prepared).
-            HAL_JPEG_ConfigInputBuffer(&JPEG_Handle, mcu_row_buffer_ptr, src_w_mcus_bytes);
-            HAL_JPEG_Resume(&JPEG_Handle, JPEG_PAUSE_RESUME_INPUT);
-        }
-    }
-
-    // After writing the last MCU to the JPEG core it will eventually generate an end-of-conversion
-    // interrupt which will finish the JPEG encoding process and clear the busy flag.
-
-    while (HAL_JPEG_GetState(&JPEG_Handle) == HAL_JPEG_STATE_BUSY_ENCODING) {
-        __WFI();
-
-        if (JPEG_output_paused) {
-            memset(&JPEG_Config, 0, sizeof(JPEG_ConfTypeDef));
-            HAL_JPEG_Abort(&JPEG_Handle);
-            fb_free(); // mcu_row_buffer (after DMA is aborted)
-            return true; // overflow
-        }
-    }
-
-    fb_free(); // mcu_row_buffer
-
-    // Set output size.
-    dst->size = JPEG_out_data_length;
-
-    // STM32H7 BUG FIX! The JPEG Encoder will ocassionally trigger the EOCF interrupt before writing
-    // a final 0x000000D9 long into the output fifo as the end of the JPEG image. When this occurs
-    // the output fifo will have a single 0 value in it after the encoding process finishes.
-    if (__HAL_JPEG_GET_FLAG(&JPEG_Handle, JPEG_FLAG_OFNEF) && (!JPEG_Handle.Instance->DOR)) {
-        // The encoding output process always aborts before writing OUTPUT_CHUNK_SIZE bytes
-        // to the end of the dma_buffer. So, it is always safe to add one extra byte.
-        dma_buffer[dst->size++] = 0xD9;
-    }
-
-    // Update the JPEG image size by the new APP0 header and it's padding. However, we have to move
-    // the SOI header to the front of the image first...
-    dst->size += app0_total_size;
-    memcpy(dst->data, dma_buffer, sizeof(uint16_t)); // move SOI
-    memcpy(dst->data + sizeof(uint16_t), JPEG_APP0, sizeof(JPEG_APP0)); // inject APP0
-
-    // Add on a comment header with 0 padding to ensure cache alignment after the APP0 header.
-    *((uint16_t *) (dst->data + sizeof(uint16_t) + sizeof(JPEG_APP0))) = __REV16(app0_padding_size); // size
-    memset(dst->data + sizeof(uint32_t) + sizeof(JPEG_APP0), 0, app0_padding_size - sizeof(uint16_t)); // data
-
-    // Clean trailing data after 0xFFD9 at the end of the jpeg byte stream.
-    dst->size = jpeg_clean_trailing_bytes(dst->size, dst->data);
-
-#if (TIME_JPEG==1)
-    printf("time: %u ms\n", mp_hal_ticks_ms() - start);
-#endif
-
-    return false;
-}
-
-void imlib_jpeg_compress_init()
-{
-    JPEG_Handle.Instance = JPEG;
-    HAL_JPEG_Init(&JPEG_Handle);
-    // Register JPEG callbacks.
-    HAL_JPEG_RegisterGetDataCallback(&JPEG_Handle, jpeg_get_data_callback);
-    HAL_JPEG_RegisterDataReadyCallback(&JPEG_Handle, jpeg_data_ready_callback);
-
-    NVIC_SetPriority(JPEG_IRQn, IRQ_PRI_JPEG);
-    HAL_NVIC_EnableIRQ(JPEG_IRQn);
-
-    JPEG_MDMA_Handle_In.Instance                        = MDMA_Channel7; // in has a lower pri than out
-    JPEG_MDMA_Handle_In.Init.Request                    = MDMA_REQUEST_JPEG_INFIFO_TH;
-    JPEG_MDMA_Handle_In.Init.TransferTriggerMode        = MDMA_BUFFER_TRANSFER;
-    JPEG_MDMA_Handle_In.Init.Priority                   = MDMA_PRIORITY_LOW;
-    JPEG_MDMA_Handle_In.Init.Endianness                 = MDMA_LITTLE_ENDIANNESS_PRESERVE;
-    JPEG_MDMA_Handle_In.Init.SourceInc                  = MDMA_SRC_INC_DOUBLEWORD;
-    JPEG_MDMA_Handle_In.Init.DestinationInc             = MDMA_DEST_INC_DISABLE;
-    JPEG_MDMA_Handle_In.Init.SourceDataSize             = MDMA_SRC_DATASIZE_DOUBLEWORD;
-    JPEG_MDMA_Handle_In.Init.DestDataSize               = MDMA_DEST_DATASIZE_WORD;
-    JPEG_MDMA_Handle_In.Init.DataAlignment              = MDMA_DATAALIGN_PACKENABLE;
-    JPEG_MDMA_Handle_In.Init.BufferTransferLength       = JPEG_INPUT_FIFO_BYTES;
-    JPEG_MDMA_Handle_In.Init.SourceBurst                = MDMA_SOURCE_BURST_4BEATS;
-    JPEG_MDMA_Handle_In.Init.DestBurst                  = MDMA_DEST_BURST_8BEATS;
-    JPEG_MDMA_Handle_In.Init.SourceBlockAddressOffset   = 0;
-    JPEG_MDMA_Handle_In.Init.DestBlockAddressOffset     = 0;
-
-    HAL_MDMA_Init(&JPEG_MDMA_Handle_In);
-    __HAL_LINKDMA(&JPEG_Handle, hdmain, JPEG_MDMA_Handle_In);
-
-    JPEG_MDMA_Handle_Out.Instance                       = MDMA_Channel6; // out has a higher pri than in
-    JPEG_MDMA_Handle_Out.Init.Request                   = MDMA_REQUEST_JPEG_OUTFIFO_TH;
-    JPEG_MDMA_Handle_Out.Init.TransferTriggerMode       = MDMA_BUFFER_TRANSFER;
-    JPEG_MDMA_Handle_Out.Init.Priority                  = MDMA_PRIORITY_LOW;
-    JPEG_MDMA_Handle_Out.Init.Endianness                = MDMA_LITTLE_ENDIANNESS_PRESERVE;
-    JPEG_MDMA_Handle_Out.Init.SourceInc                 = MDMA_SRC_INC_DISABLE;
-    JPEG_MDMA_Handle_Out.Init.DestinationInc            = MDMA_DEST_INC_DOUBLEWORD;
-    JPEG_MDMA_Handle_Out.Init.SourceDataSize            = MDMA_SRC_DATASIZE_WORD;
-    JPEG_MDMA_Handle_Out.Init.DestDataSize              = MDMA_DEST_DATASIZE_DOUBLEWORD;
-    JPEG_MDMA_Handle_Out.Init.DataAlignment             = MDMA_DATAALIGN_PACKENABLE;
-    JPEG_MDMA_Handle_Out.Init.BufferTransferLength      = JPEG_OUTPUT_FIFO_BYTES;
-    JPEG_MDMA_Handle_Out.Init.SourceBurst               = MDMA_SOURCE_BURST_8BEATS;
-    JPEG_MDMA_Handle_Out.Init.DestBurst                 = MDMA_DEST_BURST_4BEATS;
-    JPEG_MDMA_Handle_Out.Init.SourceBlockAddressOffset  = 0;
-    JPEG_MDMA_Handle_Out.Init.DestBlockAddressOffset    = 0;
-
-    HAL_MDMA_Init(&JPEG_MDMA_Handle_Out);
-    __HAL_LINKDMA(&JPEG_Handle, hdmaout, JPEG_MDMA_Handle_Out);
-}
-
-void imlib_jpeg_compress_deinit()
-{
-    memset(&JPEG_Config, 0, sizeof(JPEG_ConfTypeDef));
-    HAL_JPEG_Abort(&JPEG_Handle);
-    HAL_MDMA_DeInit(&JPEG_MDMA_Handle_Out);
-    HAL_MDMA_DeInit(&JPEG_MDMA_Handle_In);
-    HAL_NVIC_DisableIRQ(JPEG_IRQn);
-    HAL_JPEG_DeInit(&JPEG_Handle);
-}
 
 #else
 
@@ -1923,8 +1606,11 @@ bool jpeg_compress(image_t *src, image_t *dst, int quality, bool realloc)
 
     if (!dst->data) {
         uint32_t size=0;
-        dst->data = fb_alloc_all(&size, FB_ALLOC_PREFER_SIZE | FB_ALLOC_CACHE_ALIGN);
-        dst->size = IMLIB_IMAGE_MAX_SIZE(size);
+        // dst->data = fb_alloc_all(&size, FB_ALLOC_PREFER_SIZE | FB_ALLOC_CACHE_ALIGN);
+        printf("w:%d   h:%d   will alloc :%d\n", src->w, src->h , src->h * src->w * 4);
+        dst->data = xalloc(src->h * src->w * 4);
+        dst->size = IMLIB_IMAGE_MAX_SIZE(src->h * src->w * 4);
+        dst->is_data_alloc = 1;
     }
 
     if (src->is_compressed) {
@@ -2236,6 +1922,7 @@ void jpeg_read(image_t *img, const char *path)
 
     if (!img->pixels) {
         img->pixels = xalloc(img->size);
+        img->is_data_alloc = 1;
     }
 
     jpeg_read_pixels(&fp, img);
@@ -2255,7 +1942,8 @@ void jpeg_write(image_t *img, const char *path, int quality)
         // the heap and return NULL which will cause an out of memory error.
         jpeg_compress(img, &out, quality, false);
         write_data(&fp, out.pixels, out.size);
-        fb_free(NULL); // frees alloc in jpeg_compress()
+        // fb_free(NULL); // frees alloc in jpeg_compress()
+        xfree(out.data);
     }
     file_close(&fp);
 }

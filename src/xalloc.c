@@ -17,6 +17,17 @@
 #include <stdlib.h>
 #include "imlib_io.h"
 
+int Debug_s = 0;
+
+#define LOG_PRINT(fmt, ...) do{\
+	if(Debug_s)\
+	{\
+		printf(fmt"  [info:%s:%d] [%s]\n", ##__VA_ARGS__, __FILE__, __LINE__, __FUNCTION__);\
+	}\
+}while(0);
+
+
+
 static void xalloc_fail(size_t size)
 {
     imlib_printf(0, "MemoryError :memory allocation failed, allocating %d bytes", size);
@@ -31,6 +42,7 @@ void *xalloc(size_t size)
     if (size && (mem == NULL)) {
         xalloc_fail(size);
     }
+    LOG_PRINT("xalloc:%p", mem);
     return mem;
 }
 
@@ -48,6 +60,7 @@ void *xalloc0(size_t size)
         xalloc_fail(size);
     }
     memset(mem, 0, size);
+    LOG_PRINT("xalloc0:%p", mem);
     return mem;
 }
 
@@ -55,6 +68,7 @@ void *xalloc0(size_t size)
 void xfree(void *mem)
 {
     free(mem);
+    LOG_PRINT("xfree:%p", mem);
 }
 
 // returns null pointer without error if size==0
@@ -66,6 +80,7 @@ void *xrealloc(void *mem, size_t size)
     if (size && (mem == NULL)) {
         xalloc_fail(size);
     }
+    LOG_PRINT("xrealloc:%p", mem);
     return mem;
 }
 void *xcalloc(size_t nitems, size_t size)
@@ -74,6 +89,7 @@ void *xcalloc(size_t nitems, size_t size)
     if (size && (mem == NULL)) {
         xalloc_fail(size);
     }
+    LOG_PRINT("xalloc_fail:%p", mem);
     return mem;
 }
 

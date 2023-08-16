@@ -89,6 +89,19 @@ void gif_add_frame(FIL *fp, image_t *img, uint16_t delay)
                 write_byte(fp, (red<<5) | (green<<2) | blue);
             }
         }
+    } else if (IM_IS_RGB888(img)) {
+        for (int y=0; y<blocks; y++) {
+            int block_size = IM_MIN(BLOCK_SIZE, bytes - (y*BLOCK_SIZE));
+            write_byte(fp, 1 + block_size);
+            write_byte(fp, 0x80); // clear code
+            for (int x=0; x<block_size; x++) {
+                pixel24_t pixel = ((pixel24_t *) img->pixels)[(y*BLOCK_SIZE)+x];
+                int red = COLOR_RGB888_TO_R8(pixel)>>3;
+                int green = COLOR_RGB888_TO_G8(pixel)>>3;
+                int blue = COLOR_RGB888_TO_B8(pixel)>>3;
+                write_byte(fp, (red<<5) | (green<<2) | blue);
+            }
+        }
     } else if (img->is_bayer || img->is_yuv) {
         for (int y=0; y<blocks; y++) {
             int block_size = IM_MIN(BLOCK_SIZE, bytes - (y*BLOCK_SIZE));

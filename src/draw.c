@@ -485,114 +485,7 @@ void imlib_draw_row_setup(imlib_draw_row_data_t *data)
     data->row_buffer[0] = fb_alloc(image_row_size, FB_ALLOC_NO_HINT);
 
 #ifdef IMLIB_ENABLE_DMA2D
-    data->dma2d_enabled = false;
-    data->dma2d_initialized = false;
 
-    void *dst_buff = data->dst_row_override ? data->dst_row_override : data->dst_img->data;
-
-    if (data->dma2d_request && (data->dst_img->pixfmt == PIXFORMAT_RGB565) && DMA_BUFFER(dst_buff) &&
-        ((data->src_img_pixfmt == PIXFORMAT_GRAYSCALE) ||
-        ((data->src_img_pixfmt == PIXFORMAT_RGB565) && (data->rgb_channel < 0)
-         && (data->alpha != 256) && (!data->color_palette) && (!data->alpha_palette)))) {
-        data->row_buffer[1] = fb_alloc(image_row_size, FB_ALLOC_NO_HINT);
-        data->dma2d_enabled = true;
-        data->dma2d_initialized = true;
-
-        memset(&data->dma2d, 0, sizeof(data->dma2d));
-
-        data->dma2d.Instance = DMA2D;
-        data->dma2d.Init.Mode = DMA2D_M2M;
-        if (data->dst_img->pixfmt != data->src_img_pixfmt) {
-            data->dma2d.Init.Mode = DMA2D_M2M_PFC;
-        }
-        if ((data->alpha != 256) || data->alpha_palette) {
-            data->dma2d.Init.Mode = DMA2D_M2M_BLEND;
-        }
-        data->dma2d.Init.ColorMode = DMA2D_OUTPUT_RGB565;
-        data->dma2d.Init.OutputOffset = 0;
-        #if defined(MCU_SERIES_F7) || defined(MCU_SERIES_H7)
-        data->dma2d.Init.AlphaInverted = DMA2D_REGULAR_ALPHA;
-        data->dma2d.Init.RedBlueSwap = DMA2D_RB_REGULAR;
-        #endif
-        HAL_DMA2D_Init(&data->dma2d);
-
-        data->dma2d.LayerCfg[0].InputOffset = 0;
-        data->dma2d.LayerCfg[0].InputColorMode = DMA2D_INPUT_RGB565;
-        data->dma2d.LayerCfg[0].AlphaMode = DMA2D_REPLACE_ALPHA;
-        data->dma2d.LayerCfg[0].InputAlpha = data->black_background ? 0x00 : 0xff;
-        #if defined(MCU_SERIES_F7) || defined(MCU_SERIES_H7)
-        data->dma2d.LayerCfg[0].AlphaInverted = DMA2D_REGULAR_ALPHA;
-        data->dma2d.LayerCfg[0].RedBlueSwap = DMA2D_RB_REGULAR;
-        #endif
-        #if defined(MCU_SERIES_H7)
-        data->dma2d.LayerCfg[0].ChromaSubSampling = DMA2D_NO_CSS;
-        #endif
-        HAL_DMA2D_ConfigLayer(&data->dma2d, 0);
-
-        switch (data->src_img_pixfmt) {
-            case PIXFORMAT_GRAYSCALE: {
-                data->dma2d.LayerCfg[1].InputColorMode = DMA2D_INPUT_L8;
-                data->dma2d.LayerCfg[1].AlphaMode = DMA2D_COMBINE_ALPHA;
-                uint32_t *clut = fb_alloc(256 * sizeof(uint32_t), FB_ALLOC_NO_HINT);
-
-                if (!data->alpha_palette) {
-                    if (!data->color_palette) {
-                        for (int i = 0; i < 256; i++) {
-                            clut[i] = (0xff << 24) | COLOR_Y_TO_RGB888(i);
-                        }
-                    } else {
-                        for (int i = 0; i < 256; i++) {
-                            int pixel = data->color_palette[i];
-                            clut[i] = (0xff << 24) | (COLOR_RGB565_TO_R8(pixel) << 16) | (COLOR_RGB565_TO_G8(pixel) << 8) | COLOR_RGB565_TO_B8(pixel);
-                        }
-                    }
-                } else {
-                    if (!data->color_palette) {
-                        for (int i = 0; i < 256; i++) {
-                            clut[i] = (data->alpha_palette[i] << 24) | COLOR_Y_TO_RGB888(i);
-                        }
-                    } else {
-                        for (int i = 0; i < 256; i++) {
-                            int pixel = data->color_palette[i];
-                            clut[i] = (data->alpha_palette[i] << 24) | (COLOR_RGB565_TO_R8(pixel) << 16) | (COLOR_RGB565_TO_G8(pixel) << 8) | COLOR_RGB565_TO_B8(pixel);
-                        }
-                    }
-                }
-
-                DMA2D_CLUTCfgTypeDef cfg;
-                cfg.pCLUT = clut;
-                cfg.CLUTColorMode = DMA2D_CCM_ARGB8888;
-                cfg.Size = 255;
-                #if defined(MCU_SERIES_F7) || defined(MCU_SERIES_H7)
-                SCB_CleanDCache_by_Addr(clut, 256 * sizeof(uint32_t));
-                #endif
-                HAL_DMA2D_CLUTLoad(&data->dma2d, cfg, 1);
-                HAL_DMA2D_PollForTransfer(&data->dma2d, 1000);
-                break;
-            }
-            case PIXFORMAT_RGB565: {
-                data->dma2d.LayerCfg[1].InputColorMode = DMA2D_INPUT_RGB565;
-                data->dma2d.LayerCfg[1].AlphaMode = DMA2D_REPLACE_ALPHA;
-                break;
-            }
-            default: {
-                break;
-            }
-        }
-
-        data->dma2d.LayerCfg[1].InputOffset = 0;
-        data->dma2d.LayerCfg[1].InputAlpha = fast_roundf((data->alpha * 255) / 256.f);
-        #if defined(MCU_SERIES_F7) || defined(MCU_SERIES_H7)
-        data->dma2d.LayerCfg[1].AlphaInverted = DMA2D_REGULAR_ALPHA;
-        data->dma2d.LayerCfg[1].RedBlueSwap = DMA2D_RB_REGULAR;
-        #endif
-        #if defined(MCU_SERIES_H7)
-        data->dma2d.LayerCfg[1].ChromaSubSampling = DMA2D_NO_CSS;
-        #endif
-        HAL_DMA2D_ConfigLayer(&data->dma2d, 1);
-    } else {
-        data->row_buffer[1] = data->row_buffer[0];
-    }
 #else
     data->row_buffer[1] = data->row_buffer[0];
 #endif
@@ -624,23 +517,11 @@ void imlib_draw_row_teardown(imlib_draw_row_data_t *data)
 {
     if (data->smuad_alpha_palette) fb_free(data->smuad_alpha_palette);
 #ifdef IMLIB_ENABLE_DMA2D
-    if (data->dma2d_initialized) {
-        if (!data->callback) HAL_DMA2D_PollForTransfer(&data->dma2d, 1000);
-        HAL_DMA2D_DeInit(&data->dma2d);
-        if (data->src_img_pixfmt == PIXFORMAT_GRAYSCALE) fb_free(); // clut...
-        fb_free(); // data->row_buffer[1]
-    }
 #endif
     fb_free(data->row_buffer[0]); // data->row_buffer[0]
 }
 
 #ifdef IMLIB_ENABLE_DMA2D
-void imlib_draw_row_deinit_all()
-{
-    DMA2D_HandleTypeDef dma2d = {};
-    dma2d.Instance = DMA2D;
-    HAL_DMA2D_DeInit(&dma2d);
-}
 #endif
 
 void *imlib_draw_row_get_row_buffer(imlib_draw_row_data_t *data)
@@ -655,9 +536,6 @@ void imlib_draw_row_put_row_buffer(imlib_draw_row_data_t *data, void *row_buffer
     data->row_buffer[data->toggle] = row_buffer;
     data->toggle = !data->toggle;
 #ifdef IMLIB_ENABLE_DMA2D
-    if (data->dma2d_enabled && (!DMA_BUFFER(row_buffer))) {
-        data->dma2d_enabled = false;
-    }
 #endif
 }
 
@@ -8227,7 +8105,8 @@ void imlib_flood_fill(image_t *img, int x, int y,
         out.w = img->w;
         out.h = img->h;
         out.pixfmt = PIXFORMAT_BINARY;
-        out.data = fb_alloc0(image_size(&out), FB_ALLOC_NO_HINT);
+        // out.data = fb_alloc0(image_size(&out), FB_ALLOC_NO_HINT);
+        out.data = xalloc0(image_size(&out));
 
         if (mask) {
             for (int y = 0, yy = out.h; y < yy; y++) {
@@ -8340,7 +8219,8 @@ void imlib_flood_fill(image_t *img, int x, int y,
             }
         }
 
-        fb_free(out.data);
+        // fb_free(out.data);
+        xfree(out.data);
     }
 }
 #endif // IMLIB_ENABLE_FLOOD_FILL

@@ -267,6 +267,8 @@ int main()
 
     bmp_write_subimg(img_big, "./tmp_img_big.bmp",NULL);
     bmp_write_subimg(img_ts, "./tmp.bmp",NULL);
+    imlib_printf_image_info(img_ts);
+    jpeg_write(img_ts, "./tmp.jpeg", 95);
     imlib_image_destroy(&img_big);
     imlib_image_destroy(&img_ts);
     imlib_deinit_all();
