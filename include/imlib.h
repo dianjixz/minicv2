@@ -1507,6 +1507,10 @@ void imlib_flood_fill(image_t *img, int x, int y,
                       float seed_threshold, float floating_threshold,
                       int c, bool invert, bool clear_background, image_t *mask);
 void imlib_draw_cross(image_t *img, int x, int y, int c, int size, int thickness);
+// ISP Functions
+void imlib_awb(image_t *img, bool max);
+void imlib_ccm(image_t *img, float *ccm, bool offset);
+void imlib_gamma(image_t *img, float gamma, float scale, float offset);
 // Binary Functions
 void imlib_binary(image_t *out, image_t *img, list_t *thresholds, bool invert, bool zero, image_t *mask);
 void imlib_invert(image_t *img);
