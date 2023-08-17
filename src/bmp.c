@@ -374,6 +374,9 @@ void bmp_write_subimg(image_t *img, const char *path, rectangle_t *r)
         for (int i = 0; i < rect.h; i++) {
             for (int j = 0; j < rect.w; j++) {
                 pixel24_t pixel_tmp = IM_GET_RGB888_PIXEL_(img, (rect.x + j), (rect.y + i));
+                int tmp_r = pixel_tmp.red;
+                pixel_tmp.red = pixel_tmp.blue;
+                pixel_tmp.blue = tmp_r;
                 write_data(&fp, &pixel_tmp, 3);
             }
             for (int j = 0; j < waste; j++) {

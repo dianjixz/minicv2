@@ -5,7 +5,7 @@
 // assets/image/565.bmp
 // assets/image/888.bmp
 
-#define _888_e
+// #define _888_e
 
 
 
@@ -260,9 +260,11 @@ int main()
     // find_lines(img_ts);
 
     // find_cricle(img_ts);
-
+#ifdef _888_e
     image_t *img_big = imlib_image_create(320, 320, PIXFORMAT_RGB888, 0, NULL, true);
-
+#else
+    image_t *img_big = imlib_image_create(320, 320, PIXFORMAT_RGB565, 0, NULL, true);
+#endif
     imlib_image_resize(img_big, img_ts, IMAGE_HINT_BILINEAR);
 
     bmp_write_subimg(img_big, "./tmp_img_big.bmp",NULL);

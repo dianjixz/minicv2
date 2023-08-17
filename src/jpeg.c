@@ -156,11 +156,9 @@ static void jpeg_get_mcu(image_t *src, int x_offset, int y_offset, int dx, int d
 
             for (int y = y_offset, yy = y + dy, index = 0; y < yy; y++) {
                 uint32_t *rp = (uint32_t *) (IMAGE_COMPUTE_RGB565_PIXEL_ROW_PTR(src, y) + x_offset);
-                printf("start\n");
                 for (int x = 0, xx = dx - 1; x < xx; x += 2, index += 2) {
                     int pixels = *rp++;
                     // if(pixels!=0xffffffff)
-                    printf("pixels:%x\n", pixels);
                     int r_pixels = ((pixels >> 8) & 0xf800f8) | ((pixels >> 13) & 0x70007);
                     int g_pixels = ((pixels >> 3) & 0xfc00fc) | ((pixels >> 9) & 0x30003);
                     int b_pixels = ((pixels << 3) & 0xf800f8) | ((pixels >> 2) & 0x70007);
@@ -188,7 +186,7 @@ static void jpeg_get_mcu(image_t *src, int x_offset, int y_offset, int dx, int d
                     #endif
 
                     CR[index] = v, CR[index + 1] = v >> 16;
-                }printf("voer\n");
+                }
 
                 if (dx & 1) {
                     int pixel = *((uint16_t *) rp);
