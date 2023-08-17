@@ -83,7 +83,7 @@ bool bmp_read_geometry(FIL *fp, image_t *img, const char *path, bmp_read_setting
     read_long(fp, &rs->bmp_fmt);
     if ((rs->bmp_fmt != 0) && (rs->bmp_fmt != 3)) ff_unsupported_format(fp);
 
-    read_long_expect(fp, data_size);
+    read_long_ignore(fp);
     read_long_ignore(fp);
     read_long_ignore(fp);
     read_long_ignore(fp);
