@@ -271,6 +271,31 @@ int main()
     bmp_write_subimg(img_ts, "./tmp.bmp",NULL);
     imlib_printf_image_info(img_ts);
     jpeg_write(img_ts, "./tmp.jpeg", 95);
+
+
+
+
+
+    image_t *imgjpeg = imlib_image_create(0, 0, PIXFORMAT_RGB565, 0, NULL, 0);
+    jpeg_read(imgjpeg, "./tmp.jpeg");
+
+    image_t *imgrgbb = imlib_image_create(imgjpeg->w, imgjpeg->h, PIXFORMAT_RGB888, 0, NULL, true);
+
+
+    jpeg_decompress(imgrgbb, imgjpeg);
+
+    imlib_printf_image_info(imgrgbb);
+
+    imlib_draw_line(img_ts, 10, 10, 10, 100,        COLOR_R8_G8_B8_TO_RGB565(0x00, 0xff, 0x00), 4);
+    jpeg_write(img_ts, "./haha.jpeg", 95);
+
+    imlib_image_destroy(&imgjpeg);
+
+    imlib_image_destroy(&imgrgbb);
+
+
+
+
     imlib_image_destroy(&img_big);
     imlib_image_destroy(&img_ts);
     imlib_deinit_all();

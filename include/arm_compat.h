@@ -37,7 +37,8 @@ __STATIC_FORCEINLINE uint32_t __RBIT(
 __STATIC_FORCEINLINE short __REV16(
   short s )
 {
-  return ( s << 8 ) | ( s >> 8 );
+  return __builtin_bswap16(s);
+  // return ( s << 8 ) | ( s >> 8 );
 }
 
 // Reverse byte order in a word
@@ -46,8 +47,9 @@ __STATIC_FORCEINLINE short __REV16(
 __STATIC_FORCEINLINE uint32_t __REV32(
   uint32_t i )
 {
-  return ( i & 0x000000FFU ) << 24 | ( i & 0x0000FF00U ) << 8
-    | ( i & 0x00FF0000U ) >> 8 | ( i & 0xFF000000U ) >> 24;
+  return __builtin_bswap32(i);
+  // return ( i & 0x000000FFU ) << 24 | ( i & 0x0000FF00U ) << 8
+  //   | ( i & 0x00FF0000U ) >> 8 | ( i & 0xFF000000U ) >> 24;
 }
 
 __STATIC_FORCEINLINE uint32_t __SSUB16(uint32_t op1, uint32_t op2)
